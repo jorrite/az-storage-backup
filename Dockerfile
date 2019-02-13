@@ -9,4 +9,5 @@ RUN curl -L -o azcopy.tar.gz \
     && rm -rf azcopy
 
 COPY . .
+RUN chmod u+x backup.sh
 CMD ["./backup.sh"]
