@@ -1,7 +1,7 @@
 FROM debian:jessie
 
 RUN apt-get update \
-    && apt-get install curl apt-transport-https lsb-release rsync gnupg libunwind-dev libicu-dev -y
+    && apt-get install curl apt-transport-https lsb-release rsync gnupg libunwind-dev libicu-dev jq -y
 
 RUN curl -sL https://packages.microsoft.com/keys/microsoft.asc | \
     gpg --dearmor | \
