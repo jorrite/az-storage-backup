@@ -7,7 +7,24 @@ createContainerAndBackup () {
     azcopy cp "https://$SOURCE_NAME.$endpoint/$1?$SOURCE_SAS" "https://$DESTINATION_NAME.blob.core.windows.net/$1-$BACKUP_NAME?$DESTINATION_SAS" --recursive=true
 }
 
-BACKUP_NAME="backup-`date +%Y-%m-%d-%H-%M`"
+rotateBackUp () {
+    if [[ -z "${BACKUP_RETENTION_COUNT}" ]]; then
+        echo "retention not set, skipping backup rotation for $1"
+    else
+        # tail -n +X starts from Xth line, so add 1
+        BACKUP_RETENTION_COUNT=$((BACKUP_RETENTION_COUNT+1))
+        rotateContainers=($(az storage container list --account-key $DESTINATION_KEY --account-name $DESTINATION_NAME -o json | jq -r --arg STARTSWITH "$1-$DISCRIMINATOR" 'sort_by(.name) | reverse | .[].name | select(startswith($STARTSWITH))' | tail -n +${BACKUP_RETENTION_COUNT}))
+        for k in "${rotateContainers[@]}"
+        do
+            echo "deleting $k ..."
+            az storage container delete --name $k --account-key $DESTINATION_KEY --account-name $DESTINATION_NAME 
+        done
+    fi
+}
+
+[[ -z "${BACKUP_NAME_DISCRIMINATOR}" ]] && DISCRIMINATOR='backup-' || DISCRIMINATOR="backup-${BACKUP_NAME_DISCRIMINATOR}-"
+
+BACKUP_NAME="${DISCRIMINATOR}`date +%Y-%m-%d-%H-%M`"
 end=`date -d "30 minutes" '+%Y-%m-%dT%H:%M:%SZ'`
 
 # get all source containers
@@ -19,6 +36,7 @@ azCommand="container"
 for i in "${containers[@]}"
 do
     createContainerAndBackup $i
+    rotateBackUp $i
 done
 
 # get all source shares
@@ -32,4 +50,5 @@ azCommand="share"
 for i in "${shares[@]}"
 do
     createContainerAndBackup $i
+    rotateBackUp $i
 done

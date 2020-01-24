@@ -1,21 +1,25 @@
-FROM debian:jessie
+FROM golang:alpine as builder
 
-RUN apt-get update \
-    && apt-get install curl apt-transport-https lsb-release rsync gnupg libunwind-dev libicu-dev jq -y
+LABEL maintainer="Jorrit Elfferich <jorrit@elfferi.ch>"
+LABEL description="A simple Alpine container you can use to backup azure storage accounts."
+LABEL attribution="Heavily inspired by https://github.com/hyperized/docker-azcopy-alpine"
 
-RUN curl -sL https://packages.microsoft.com/keys/microsoft.asc | \
-    gpg --dearmor | \
-    tee /etc/apt/trusted.gpg.d/microsoft.asc.gpg > /dev/null
-RUN AZ_REPO=$(lsb_release -cs) \
-    && echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $AZ_REPO main" | \
-    tee /etc/apt/sources.list.d/azure-cli.list
+RUN apk add --no-cache git && rm -rf /var/cache/apk/*
+RUN go get -u github.com/Azure/azure-storage-azcopy
+WORKDIR /go/src/github.com/Azure/azure-storage-azcopy
+ENV GOOS linux
+ENV GARCH amd64
+ENV CGO_ENABLED 0
+RUN go install -v -a -installsuffix cgo
 
-RUN apt-get update && apt-get install azure-cli -y
-RUN mkdir azcopy \
-    && curl -L -o azcopy.tar.gz \
-    https://aka.ms/downloadazcopy-v10-linux \
-    && tar -xf azcopy.tar.gz -C azcopy --strip-components=1 && rm -f azcopy.tar.gz \
-    && ln -s /azcopy/azcopy /usr/bin/azcopy
+FROM alpine
+COPY --from=builder /go/bin/azure-storage-azcopy /usr/local/bin/azcopy
+RUN apk add --no-cache ca-certificates && rm -rf /var/cache/apk/*
+RUN apk update
+RUN apk add make bash py-pip jq coreutils
+RUN apk add --virtual=build gcc libffi-dev musl-dev openssl-dev python-dev
+RUN pip install azure-cli
+RUN apk del --purge build
 
 COPY . .
 RUN chmod u+x backup.sh
