@@ -1,54 +1,64 @@
 #!/bin/bash
+set -e
 
-createContainerAndBackup () {
-    az storage container create -n $i-$BACKUP_NAME --account-key $DESTINATION_KEY --account-name $DESTINATION_NAME
-    SOURCE_SAS=$(az storage $azCommand generate-sas -n $1 --account-key $SOURCE_KEY --account-name $SOURCE_NAME --https-only --permissions dlrw --expiry $end -otsv)
-    DESTINATION_SAS=$(az storage container generate-sas -n $1-$BACKUP_NAME --account-key $DESTINATION_KEY --account-name $DESTINATION_NAME --https-only --permissions dlrw --expiry $end -otsv)
-    azcopy cp "https://$SOURCE_NAME.$endpoint/$1?$SOURCE_SAS" "https://$DESTINATION_NAME.blob.core.windows.net/$1-$BACKUP_NAME?$DESTINATION_SAS" --recursive=true
+blob_enabled=$(dig +short $SOURCE_STORAGE_ACCOUNT_NAME.blob.core.windows.net)
+file_enabled=$(dig +short $SOURCE_STORAGE_ACCOUNT_NAME.file.core.windows.net)
+
+container="$SOURCE_STORAGE_ACCOUNT_NAME"
+directory="$BACKUP_FREQUENCY"
+sub_directory="`date +%Y-%m-%d-%H-%M`"
+
+
+backup() {
+    path=""
+    source=""
+    endpoint=""
+    case "$1" in
+        files)
+            path="$1/$directory/$sub_directory"
+            services="f"
+            endpoint="file.core.windows.net"
+            ;;
+        
+        blobs)
+            path="$1/$directory/$sub_directory"
+            services="b"
+            endpoint="blob.core.windows.net"
+            ;;    
+    esac
+    
+    end=$(date -d@"$(( `date +%s`+120*60))" '+%Y-%m-%dT%H:%M:%SZ')
+    SOURCE_SAS=$(az storage account generate-sas --services $services --resource-types sco --account-key $SOURCE_STORAGE_ACCOUNT_KEY --account-name $SOURCE_STORAGE_ACCOUNT_NAME --https-only --permissions dlrw --expiry $end -otsv)
+    DESTINATION_SAS=$(az storage account generate-sas --services b --resource-types sco --account-key $DESTINATION_STORAGE_ACCOUNT_KEY --account-name $DESTINATION_STORAGE_ACCOUNT_NAME --https-only --permissions dlrw --expiry $end -otsv)
+    azcopy cp "https://$SOURCE_STORAGE_ACCOUNT_NAME.$endpoint/?$SOURCE_SAS" "https://$DESTINATION_STORAGE_ACCOUNT_NAME.blob.core.windows.net/$container/$path?$DESTINATION_SAS" --recursive=true
 }
 
-rotateBackUp () {
+rotate () {
     if [[ -z "${BACKUP_RETENTION_COUNT}" ]]; then
-        echo "retention not set, skipping backup rotation for $1"
+        echo "retention not set, skipping backup rotation"
     else
         # tail -n +X starts from Xth line, so add 1
         BACKUP_RETENTION_COUNT=$((BACKUP_RETENTION_COUNT+1))
-        rotateContainers=($(az storage container list --account-key $DESTINATION_KEY --account-name $DESTINATION_NAME --num-results "*" -o json | jq -r --arg STARTSWITH "$1-$DISCRIMINATOR" 'sort_by(.name) | reverse | .[].name | select(startswith($STARTSWITH))' | tail -n +${BACKUP_RETENTION_COUNT}))
-        for k in "${rotateContainers[@]}"
+        rotate_dirs=($(az storage blob directory list --account-key $DESTINATION_STORAGE_ACCOUNT_KEY --account-name $DESTINATION_STORAGE_ACCOUNT_NAME -c $container -d "$1/$directory" -o json --delimiter '/' | jq -r 'sort_by(.name) | reverse | .[].name' | tail -n +${BACKUP_RETENTION_COUNT}))
+        for k in "${rotate_dirs[@]}"
         do
-            echo "deleting $k ..."
-            az storage container delete --name $k --account-key $DESTINATION_KEY --account-name $DESTINATION_NAME 
+            echo "deleting ${k%/} ..."
+            az storage blob directory delete --account-key $DESTINATION_STORAGE_ACCOUNT_KEY --account-name $DESTINATION_STORAGE_ACCOUNT_NAME -c $container -d ${k%/} --recursive
         done
     fi
 }
 
-[[ -z "${BACKUP_NAME_DISCRIMINATOR}" ]] && DISCRIMINATOR='backup-' || DISCRIMINATOR="backup-${BACKUP_NAME_DISCRIMINATOR}-"
+az storage container create \
+    -n $container \
+    --account-key $DESTINATION_STORAGE_ACCOUNT_KEY \
+    --account-name $DESTINATION_STORAGE_ACCOUNT_NAME 
 
-BACKUP_NAME="${DISCRIMINATOR}`date +%Y-%m-%d-%H-%M`"
-end=`date -d "30 minutes" '+%Y-%m-%dT%H:%M:%SZ'`
+if [[ ! -z "$file_enabled" ]]; then
+    backup "files"
+    rotate "files"
+fi
 
-# get all source containers
-containers=($(az storage container list --account-key $SOURCE_KEY --account-name $SOURCE_NAME  --num-results "*" -o json | jq -r '.[].name'))
-endpoint="blob.core.windows.net"
-azCommand="container"
-
-# create all destination containers and copy
-for i in "${containers[@]}"
-do
-    createContainerAndBackup $i
-    rotateBackUp $i
-done
-
-# get all source shares
-shares=($(az storage share list --account-key $SOURCE_KEY --account-name $SOURCE_NAME --num-results "*" -o json | jq -r '.[].name'))
-endpoint="file.core.windows.net"
-azCommand="share"
-# create all destination containers and copy
-# unfortunately, recursively copying from file-share to file-share doesn't work. 
-# See https://github.com/Azure/azure-storage-azcopy/issues/248#issuecomment-481204287
-# instead we'll just backup to a blob container
-for i in "${shares[@]}"
-do
-    createContainerAndBackup $i
-    rotateBackUp $i
-done
+if [[ ! -z "$blob_enabled" ]]; then
+    backup "blobs"
+    rotate "blobs"
+fi
