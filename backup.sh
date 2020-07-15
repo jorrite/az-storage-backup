@@ -117,9 +117,10 @@ sync() {
     fi
 
     to_be_copied_containers_or_shares=$(echo $source_containers_or_shares | jq --argjson d "$destination_containers_or_shares" '. - $d')
-    to_be_removed_containers_or_shares=$(echo $destination_containers_or_shares | jq -r --argjson s "$source_containers_or_shares" '. - $s | .[]')
-    to_be_synced_containers_or_shares=$(echo $source_containers_or_shares | jq -r --argjson c "$to_be_copied_containers_or_shares" '. - $c | .[]')
-    to_be_copied_containers_or_shares=$(echo $source_containers_or_shares | jq -r --argjson d "$destination_containers_or_shares" '. - $d | .[]')
+    to_be_removed_containers_or_shares=($(echo $destination_containers_or_shares | jq -r --argjson s "$source_containers_or_shares" '. - $s | .[]'))
+    to_be_synced_containers_or_shares=($(echo $source_containers_or_shares | jq -r --argjson c "$to_be_copied_containers_or_shares" '. - $c | .[]'))
+    to_be_copied_containers_or_shares=($(echo $source_containers_or_shares | jq -r --argjson d "$destination_containers_or_shares" '. - $d | .[]'))
+
 
     for k in "${to_be_copied_containers_or_shares[@]}"
     do
@@ -134,7 +135,7 @@ sync() {
         echo -e "\e[32m--- \e[0m"
         echo ""
 
-        azcopy cp "https://$SOURCE_STORAGE_ACCOUNT_NAME.$endpoint/${k%/}/*?$source_sas" "https://$DESTINATION_STORAGE_ACCOUNT_NAME.$endpoint/${k%/}?$destination_sas" --recursive=true
+        azcopy cp "https://$SOURCE_STORAGE_ACCOUNT_NAME.$endpoint/${k%/}?$source_sas" "https://$DESTINATION_STORAGE_ACCOUNT_NAME.$endpoint/${k%/}?$destination_sas" --recursive=true
     done
 
     for k in "${to_be_removed_containers_or_shares[@]}"
