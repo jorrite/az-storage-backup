@@ -143,13 +143,27 @@ sync() {
         if [ -z "$k" ]; then
             break
         fi
+
+        share_or_container=""
+        if [ "$type" == "blobs" ]; then
+            share_or_container="Container:\t"
+        elif [ "$type" == "files" ]; then
+            share_or_container="Share:\t\t"
+        fi
         echo -e "\e[32m--- \e[0m"
         echo -e "\e[32m** REMOVE\e[0m"
         echo -e "\e[32m--- \e[0m"
-        echo -e "\e[32mDirectory:\thttps://$DESTINATION_STORAGE_ACCOUNT_NAME.$endpoint/${k%/} ... \e[0m"
+        echo -e "\e[32m$share_or_container https://$DESTINATION_STORAGE_ACCOUNT_NAME.$endpoint/${k%/} ... \e[0m"
         echo -e "\e[32m--- \e[0m"
         echo ""
-        azcopy rm "https://$DESTINATION_STORAGE_ACCOUNT_NAME.$endpoint/${k%/}?$destination_sas" --recursive=true
+
+        if [ "$type" == "blobs" ]; then
+            az storage container delete --only-show-errors --account-key $DESTINATION_STORAGE_ACCOUNT_KEY --account-name $DESTINATION_STORAGE_ACCOUNT_NAME -n ${k%/}
+            echo ""
+        elif [ "$type" == "files" ]; then
+            az storage share delete --only-show-errors --account-key $DESTINATION_STORAGE_ACCOUNT_KEY --account-name $DESTINATION_STORAGE_ACCOUNT_NAME  -n ${k%/}
+            echo ""
+        fi
     done
 
     for k in "${to_be_synced_containers_or_shares[@]}"
